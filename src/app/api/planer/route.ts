@@ -46,9 +46,25 @@ Gib mind. 5 Sehenswürdigkeiten, 4 Restaurants, 4 Aktivitäten und eine vollstä
     });
 
     const text = response.content[0].type === 'text' ? response.content[0].text : '';
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON');
-    return NextResponse.json(JSON.parse(match[0]));
+
+    // Extrahiere JSON — zuerst aus Code-Blöcken, dann direkt
+    let jsonStr = '';
+    const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlock) {
+      jsonStr = codeBlock[1].trim();
+    } else {
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start === -1 || end === -1) throw new Error('No JSON found');
+      jsonStr = text.slice(start, end + 1);
+    }
+
+    // Bereinige häufige Probleme
+    jsonStr = jsonStr
+      .replace(/,\s*}/g, '}')     // trailing commas in objects
+      .replace(/,\s*]/g, ']');    // trailing commas in arrays
+
+    return NextResponse.json(JSON.parse(jsonStr));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });
