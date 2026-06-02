@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, Loader2, MapPin, Utensils, Zap, Package, Lightbulb } from 'lucide-react';
+import { ChevronLeft, Loader2, MapPin, Utensils, Zap, Package, Lightbulb, Download } from 'lucide-react';
 
 interface PlanResult {
   sehenswuerdigkeiten: { name: string; beschreibung: string; tipp: string; dauer: string }[];
@@ -22,6 +22,7 @@ export default function PlanerPage() {
   const [endDate, setEndDate] = useState('');
   const [interessen, setInteressen] = useState('');
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<PlanResult | null>(null);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'sights' | 'food' | 'activities' | 'pack' | 'tips'>('sights');
@@ -48,6 +49,285 @@ export default function PlanerPage() {
     }
   };
 
+  const exportPDF = async () => {
+    if (!result) return;
+    setExporting(true);
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pw = doc.internal.pageSize.getWidth();
+      const ph = doc.internal.pageSize.getHeight();
+      const ml = 14;
+      const cw = pw - ml * 2;
+      let y = 0;
+
+      const checkPage = (needed = 12) => {
+        if (y + needed > ph - 14) {
+          doc.addPage();
+          y = 16;
+        }
+      };
+
+      const sectionTitle = (text: string) => {
+        checkPage(14);
+        y += 3;
+        doc.setFillColor(14, 165, 233);
+        doc.rect(ml, y, 3, 7, 'F');
+        doc.setFontSize(13);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(text, ml + 6, y + 5.5);
+        y += 11;
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.3);
+        doc.line(ml, y, ml + cw, y);
+        y += 5;
+      };
+
+      const card = (lines: string[][], boxColor: [number, number, number] = [248, 250, 252]) => {
+        const lineHeights = lines.map(([, , , h]) => parseFloat(h || '4'));
+        const totalH = lineHeights.reduce((a, b) => a + b, 0) + 6;
+        checkPage(totalH + 4);
+        doc.setFillColor(...boxColor);
+        doc.roundedRect(ml, y, cw, totalH, 2, 2, 'F');
+        y += 4;
+        for (const [text, font, colorStr, lineH] of lines) {
+          const [r, g, b] = (colorStr || '60,60,60').split(',').map(Number);
+          doc.setFontSize(parseFloat(font || '9'));
+          doc.setFont('helvetica', font?.includes('bold') ? 'bold' : 'normal');
+          doc.setTextColor(r, g, b);
+          const wrapped = doc.splitTextToSize(text, cw - 6);
+          doc.text(wrapped, ml + 3, y);
+          y += wrapped.length * parseFloat(lineH || '4');
+        }
+        y += 4;
+      };
+
+      // ---- HEADER ----
+      doc.setFillColor(14, 165, 233);
+      doc.rect(0, 0, pw, 36, 'F');
+      doc.setFillColor(7, 89, 133);
+      doc.rect(0, 28, pw, 8, 'F');
+
+      doc.setFontSize(22);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(255, 255, 255);
+      doc.text('Reiseplan', ml, 13);
+
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text(destination, ml, 24);
+
+      if (startDate || endDate) {
+        const dateStr = startDate && endDate ? `${startDate}  bis  ${endDate}` : startDate || endDate;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(186, 230, 253);
+        doc.text(dateStr, ml, 32);
+      }
+      if (interessen) {
+        doc.setFontSize(8);
+        doc.setTextColor(186, 230, 253);
+        doc.text(`Interessen: ${interessen}`, pw - ml - doc.getTextWidth(`Interessen: ${interessen}`), 32);
+      }
+
+      y = 44;
+
+      // ---- QUICK INFO ----
+      const infoW = (cw - 4) / 3;
+      const infos = [
+        { label: 'Beste Reisezeit', val: result.beste_reisezeit },
+        { label: 'Waehrung', val: result.währung },
+        { label: 'Sprache', val: result.sprache },
+      ];
+      infos.forEach((info, i) => {
+        const x = ml + i * (infoW + 2);
+        doc.setFillColor(240, 249, 255);
+        doc.roundedRect(x, y, infoW, 16, 2, 2, 'F');
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(14, 165, 233);
+        doc.text(info.label.toUpperCase(), x + 3, y + 5);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(30, 41, 59);
+        const vLines = doc.splitTextToSize(info.val, infoW - 6);
+        doc.text(vLines.slice(0, 2), x + 3, y + 10);
+      });
+      y += 22;
+
+      // ---- SEHENSWUERDIGKEITEN ----
+      sectionTitle('Sehenswuerdigkeiten');
+      result.sehenswuerdigkeiten.forEach((s, i) => {
+        const descWrapped = doc.splitTextToSize(s.beschreibung, cw - 6);
+        const tipWrapped = doc.splitTextToSize(`Tipp: ${s.tipp}`, cw - 6);
+        const totalH = 5 + descWrapped.length * 4 + tipWrapped.length * 3.5 + 7;
+        checkPage(totalH + 4);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(ml, y, cw, totalH, 2, 2, 'F');
+        const startY = y;
+        y += 5;
+
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${i + 1}. ${s.name}`, ml + 3, y);
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(14, 165, 233);
+        const durW = doc.getTextWidth(s.dauer);
+        doc.text(s.dauer, ml + cw - durW - 3, y);
+        y += 5;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(71, 85, 105);
+        doc.text(descWrapped, ml + 3, y);
+        y += descWrapped.length * 4 + 2;
+
+        doc.setFillColor(255, 251, 235);
+        doc.roundedRect(ml + 2, y - 1, cw - 4, tipWrapped.length * 3.5 + 4, 1, 1, 'F');
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(180, 120, 20);
+        doc.text(tipWrapped, ml + 5, y + 2.5);
+        y += tipWrapped.length * 3.5 + 6;
+        void startY;
+      });
+
+      // ---- RESTAURANTS ----
+      sectionTitle('Restaurants & Essen');
+      result.restaurants.forEach(r => {
+        const descWrapped = doc.splitTextToSize(r.beschreibung, cw - 6);
+        const totalH = 5 + descWrapped.length * 4 + 10;
+        checkPage(totalH + 4);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(ml, y, cw, totalH, 2, 2, 'F');
+        y += 5;
+
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(r.name, ml + 3, y);
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(22, 163, 74);
+        const pkW = doc.getTextWidth(r.preisklasse);
+        doc.text(r.preisklasse, ml + cw - pkW - 3, y);
+        y += 5;
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(99, 102, 241);
+        doc.text(r.typ, ml + 3, y);
+        y += 5;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(71, 85, 105);
+        doc.text(descWrapped, ml + 3, y);
+        y += descWrapped.length * 4 + 4;
+      });
+
+      // ---- AKTIVITAETEN ----
+      sectionTitle('Aktivitaeten');
+      result.aktivitaeten.forEach(a => {
+        const descWrapped = doc.splitTextToSize(a.beschreibung, cw - 6);
+        const totalH = 5 + descWrapped.length * 4 + 6;
+        checkPage(totalH + 4);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(ml, y, cw, totalH, 2, 2, 'F');
+        y += 5;
+
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(a.name, ml + 3, y);
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(107, 114, 128);
+        const typW = doc.getTextWidth(a.typ);
+        doc.text(a.typ, ml + cw - typW - 3, y);
+        y += 5;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(71, 85, 105);
+        doc.text(descWrapped, ml + 3, y);
+        y += descWrapped.length * 4 + 4;
+      });
+
+      // ---- PACKLISTE ----
+      sectionTitle('Packliste');
+      const packSections = [
+        { title: 'Kleidung', items: result.packliste.kleidung },
+        { title: 'Dokumente', items: result.packliste.dokumente },
+        { title: 'Sonstiges', items: result.packliste.sonstiges },
+      ];
+      packSections.forEach(section => {
+        checkPage(10 + section.items.length * 6);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.text(section.title, ml, y);
+        y += 5;
+        section.items.forEach(item => {
+          checkPage(6);
+          doc.setDrawColor(200, 210, 220);
+          doc.setLineWidth(0.3);
+          doc.roundedRect(ml + 1, y - 3, 3.5, 3.5, 0.5, 0.5);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(71, 85, 105);
+          doc.text(item, ml + 7, y);
+          y += 5;
+        });
+        y += 3;
+      });
+
+      // ---- GEHEIMTIPPS ----
+      sectionTitle('Geheimtipps');
+      result.geheimtipps.forEach(tip => {
+        const tipWrapped = doc.splitTextToSize(tip, cw - 10);
+        const boxH = tipWrapped.length * 4 + 6;
+        checkPage(boxH + 3);
+        doc.setFillColor(255, 251, 235);
+        doc.roundedRect(ml, y, cw, boxH, 2, 2, 'F');
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(217, 119, 6);
+        doc.text('*', ml + 3, y + 5);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(71, 85, 105);
+        doc.text(tipWrapped, ml + 9, y + 4.5);
+        y += boxH + 3;
+      });
+
+      // ---- FOOTER ----
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFillColor(248, 250, 252);
+        doc.rect(0, ph - 10, pw, 10, 'F');
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Seite ${i} / ${pageCount}`, ml, ph - 4);
+        doc.text('Erstellt mit Urlaub App', pw - ml - doc.getTextWidth('Erstellt mit Urlaub App'), ph - 4);
+      }
+
+      doc.save(`Reiseplan-${destination}.pdf`);
+    } catch (e) {
+      console.error('PDF export error:', e);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const tabs = [
     { id: 'sights', label: 'Sights', icon: MapPin },
     { id: 'food', label: 'Essen', icon: Utensils },
@@ -64,6 +344,17 @@ export default function PlanerPage() {
             <ChevronLeft size={20} className="text-gray-600" />
           </button>
           <h1 className="text-xl font-bold text-gray-900">Reiseplaner</h1>
+          {result && (
+            <button
+              onClick={exportPDF}
+              disabled={exporting}
+              className="ml-auto flex items-center gap-1.5 px-3 py-2 bg-sky-500 text-white rounded-xl text-xs font-semibold hover:bg-sky-600 transition-colors disabled:opacity-50"
+            >
+              {exporting
+                ? <><Loader2 size={13} className="animate-spin" /> PDF…</>
+                : <><Download size={13} /> PDF</>}
+            </button>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
@@ -130,7 +421,6 @@ export default function PlanerPage() {
               ))}
             </div>
 
-            {/* Sehenswürdigkeiten */}
             {activeTab === 'sights' && (
               <div className="space-y-3">
                 {result.sehenswuerdigkeiten.map((s, i) => (
@@ -146,7 +436,6 @@ export default function PlanerPage() {
               </div>
             )}
 
-            {/* Restaurants */}
             {activeTab === 'food' && (
               <div className="space-y-3">
                 {result.restaurants.map((r, i) => (
@@ -162,7 +451,6 @@ export default function PlanerPage() {
               </div>
             )}
 
-            {/* Aktivitäten */}
             {activeTab === 'activities' && (
               <div className="space-y-3">
                 {result.aktivitaeten.map((a, i) => (
@@ -177,7 +465,6 @@ export default function PlanerPage() {
               </div>
             )}
 
-            {/* Packliste */}
             {activeTab === 'pack' && (
               <div className="space-y-3">
                 {[
@@ -200,7 +487,6 @@ export default function PlanerPage() {
               </div>
             )}
 
-            {/* Geheimtipps */}
             {activeTab === 'tips' && (
               <div className="space-y-2">
                 {result.geheimtipps.map((tip, i) => (

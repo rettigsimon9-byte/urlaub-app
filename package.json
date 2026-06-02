@@ -9,12 +9,13 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0",
     "@anthropic-ai/sdk": "^0.40.0",
+    "@prisma/client": "^5.14.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.400.0",
     "next": "14.2.35",
     "react": "^18",
-    "react-dom": "^18",
-    "lucide-react": "^0.400.0"
+    "react-dom": "^18"
   },
   "devDependencies": {
     "@types/node": "^20",
