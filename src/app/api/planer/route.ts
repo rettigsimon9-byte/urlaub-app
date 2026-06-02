@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
+      max_tokens: 4096,
       messages: [{
         role: 'user',
         content: `Erstelle einen detaillierten Reiseplan für: ${destination} (${dauer}).
