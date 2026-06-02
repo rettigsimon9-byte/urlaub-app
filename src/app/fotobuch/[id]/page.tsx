@@ -442,11 +442,29 @@ export default function TripDetailPage() {
         d.setFillColor(239, 68, 68);
         d.rect(18, 31, 18, 1.5, 'F');
 
-        // Karte als helles Panel auf dunklem Hintergrund
-        const mapImg = await buildMapDataUrl(pinsForMap);
+        // Karte: direkt aus der App-Ansicht per html2canvas capturen
+        // → sieht 1:1 wie die Leaflet-Karte in der App aus
+        let mapImg: string | null = null;
+        const mapEl = document.getElementById('trip-map-container');
+        if (mapEl) {
+          try {
+            const { default: html2canvas } = await import('html2canvas');
+            const canvas = await html2canvas(mapEl, {
+              useCORS: true,
+              allowTaint: false,
+              logging: false,
+              scale: 2,
+            });
+            mapImg = canvas.toDataURL('image/png');
+          } catch {
+            mapImg = await buildMapDataUrl(pinsForMap);
+          }
+        } else {
+          mapImg = await buildMapDataUrl(pinsForMap);
+        }
+
         const mapX = 18, mapY = 37, mapW = pw - 36, mapH = 115;
         if (mapImg) {
-          // Leicht erhöhte Karten-Karte (weiße Umrandung)
           d.setFillColor(255, 255, 255);
           d.rect(mapX - 2, mapY - 2, mapW + 4, mapH + 4, 'F');
           d.addImage(mapImg, 'PNG', mapX, mapY, mapW, mapH, undefined, 'FAST');

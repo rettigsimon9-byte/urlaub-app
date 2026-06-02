@@ -130,7 +130,7 @@ export default function TripMap({ photos }: { photos: PhotoPin[] }) {
 
   return (
     <div className="rounded-2xl overflow-hidden shadow-sm mb-5 border border-gray-100">
-      <div ref={mapRef} style={{ height: 220, width: '100%' }} />
+      <div id="trip-map-container" ref={mapRef} style={{ height: 220, width: '100%' }} />
     </div>
   );
 }
