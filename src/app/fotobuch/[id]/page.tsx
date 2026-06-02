@@ -41,13 +41,25 @@ interface UploadingPhoto {
 
 // ---- Helpers ----
 
-async function extractGPS(file: File): Promise<{ lat: number; lon: number } | null> {
+async function extractExif(file: File): Promise<{ lat: number | null; lon: number | null; date: string | null }> {
   try {
     const exifr = await import('exifr');
-    const result = await exifr.default.parse(file, { gps: true, tiff: false });
-    if (!result?.latitude || !result?.longitude) return null;
-    return { lat: result.latitude, lon: result.longitude };
-  } catch { return null; }
+    const result = await exifr.default.parse(file, { gps: true, tiff: true, exif: true });
+    if (!result) return { lat: null, lon: null, date: null };
+
+    const lat = result.latitude ?? null;
+    const lon = result.longitude ?? null;
+
+    let date: string | null = null;
+    const raw = result.DateTimeOriginal ?? result.DateTime;
+    if (raw instanceof Date && !isNaN(raw.getTime())) {
+      date = raw.toISOString().split('T')[0];
+    }
+
+    return { lat, lon, date };
+  } catch {
+    return { lat: null, lon: null, date: null };
+  }
 }
 
 async function reverseGeocode(lat: number, lon: number): Promise<{ name: string; ort: string } | null> {
@@ -194,16 +206,16 @@ export default function TripDetailPage() {
       const file = images[i]; const uid = newUploads[i].id;
       try {
         const [display, thumb] = await Promise.all([resizeImage(file, 1200), resizeImage(file, 300)]);
-        const gps = await extractGPS(file);
-        let placeName = '', placeOrt = '', lat: number | null = null, lon: number | null = null;
-        if (gps) {
-          lat = gps.lat; lon = gps.lon;
-          const geo = await reverseGeocode(gps.lat, gps.lon);
+        const exif = await extractExif(file);
+        const { lat, lon } = exif;
+        let placeName = '', placeOrt = '';
+        if (lat && lon) {
+          const geo = await reverseGeocode(lat, lon);
           if (geo) { placeName = geo.name; placeOrt = geo.ort; }
         }
         const saveRes = await fetch('/api/photos', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tripId, imageData: display, thumbnail: thumb, placeName, placeOrt, placeType: '', placeInfo: '', lat, lon }),
+          body: JSON.stringify({ tripId, imageData: display, thumbnail: thumb, placeName, placeOrt, placeType: '', placeInfo: '', lat, lon, photoDate: exif.date }),
         });
         const savedPhoto = await saveRes.json();
         setTrip(prev => prev ? { ...prev, photos: [...prev.photos, savedPhoto] } : prev);

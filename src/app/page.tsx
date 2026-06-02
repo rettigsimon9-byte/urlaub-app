@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { MapPin, BookImage, Plus, ChevronRight } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { MapPin, BookImage, Plus, ChevronRight, LogOut } from 'lucide-react';
 
 interface Trip {
   id: string;
@@ -15,7 +16,13 @@ interface Trip {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const [trips, setTrips] = useState<Trip[]>([]);
+
+  const logout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    router.replace('/login');
+  };
 
   useEffect(() => {
     fetch('/api/trips').then(r => r.json()).then(setTrips).catch(() => {});
@@ -27,9 +34,17 @@ export default function Dashboard() {
     <div className="min-h-screen pb-10">
       {/* Hero */}
       <div className="bg-gradient-to-br from-sky-500 to-indigo-600 px-5 pt-14 pb-10 text-white">
-        <p className="text-sky-200 text-sm font-medium mb-1">Willkommen zurück</p>
-        <h1 className="text-3xl font-bold mb-1">Urlaub App ✈️</h1>
-        <p className="text-sky-100 text-sm">Planen, erleben, erinnern</p>
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sky-200 text-sm font-medium mb-1">Willkommen zurück</p>
+            <h1 className="text-3xl font-bold mb-1">Urlaub App ✈️</h1>
+            <p className="text-sky-100 text-sm">Planen, erleben, erinnern</p>
+          </div>
+          <button onClick={logout}
+            className="mt-1 flex items-center gap-1.5 text-sky-200 hover:text-white text-xs font-medium transition-colors">
+            <LogOut size={14} /> Abmelden
+          </button>
+        </div>
       </div>
 
       <div className="px-5 -mt-5">
