@@ -132,7 +132,7 @@ async function buildMapDataUrl(pins: { lat: number; lon: number; num: number }[]
           img.crossOrigin = 'anonymous';
           img.onload = () => { ctx.drawImage(img, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE); res(); };
           img.onerror = () => res();
-          img.src = `https://tile.openstreetmap.org/${zoom}/${originX + tx}/${originY + ty}.png`;
+          img.src = `https://a.basemaps.cartocdn.com/rastertiles/voyager/${zoom}/${originX + tx}/${originY + ty}.png`;
         })
       )
     ).flat()
@@ -298,32 +298,33 @@ export default function TripDetailPage() {
       const cw = pw - ml * 2;
 
       // ---- SEITE 1: COVER ----
+      // Deckblatt: Vollformatfoto + eleganter Textbereich darunter
       if (trip.coverPhoto) {
         try {
           const fmt = trip.coverPhoto.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-          const { w, h } = await getImageSize(trip.coverPhoto);
-          const imgH = Math.min((h / w) * pw, ph * 0.55);
-          doc.addImage(trip.coverPhoto, fmt, 0, 0, pw, imgH, undefined, 'FAST');
-          // Gradient overlay
-          doc.setFillColor(0, 0, 0);
-          for (let i = 0; i < 30; i++) {
-            doc.setGState(doc.GState({ opacity: 0.015 * i }));
-            doc.rect(0, imgH - 30 + i, pw, 1, 'F');
-          }
-          doc.setGState(doc.GState({ opacity: 1 }));
-          // Text below image
-          const textY = imgH + 10;
-          doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
-          doc.text(trip.name, ml, textY);
-          doc.setFontSize(13); doc.setFont('helvetica', 'normal'); doc.setTextColor(71, 85, 105);
-          doc.text(trip.destination, ml, textY + 9);
-          if (trip.startDate) {
-            doc.setFontSize(9); doc.setTextColor(148, 163, 184);
-            const dateStr = trip.endDate ? `${trip.startDate}  –  ${trip.endDate}` : trip.startDate;
-            doc.text(dateStr, ml, textY + 17);
-          }
-          doc.setFontSize(9); doc.setTextColor(148, 163, 184);
-          doc.text(`${trip.photos.length} Fotos`, ml, textY + (trip.startDate ? 24 : 17));
+          // Foto nimmt obere 65% der Seite ein
+          const coverH = ph * 0.65;
+          doc.addImage(trip.coverPhoto, fmt, 0, 0, pw, coverH, undefined, 'FAST');
+          // Dünner weißer Trennstrich
+          doc.setFillColor(255, 255, 255);
+          doc.rect(0, coverH, pw, 2, 'F');
+          // Unterer Bereich: cremefarbener Hintergrund
+          doc.setFillColor(250, 249, 246);
+          doc.rect(0, coverH + 2, pw, ph - coverH - 2, 'F');
+          // Akzentlinie links
+          doc.setFillColor(14, 165, 233);
+          doc.rect(ml, coverH + 14, 3, 28, 'F');
+          // Titel
+          doc.setFontSize(26); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
+          doc.text(trip.name, ml + 8, coverH + 24);
+          doc.setFontSize(12); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139);
+          doc.text(trip.destination, ml + 8, coverH + 33);
+          // Datum + Anzahl
+          doc.setFontSize(8.5); doc.setTextColor(148, 163, 184);
+          const meta: string[] = [];
+          if (trip.startDate) meta.push(trip.endDate ? `${trip.startDate} – ${trip.endDate}` : trip.startDate);
+          meta.push(`${trip.photos.length} Fotos`);
+          doc.text(meta.join('   ·   '), ml + 8, coverH + 41);
         } catch {
           renderFallbackCover(doc, trip, pw, ml, cw);
         }
@@ -339,47 +340,83 @@ export default function TripDetailPage() {
 
       if (pinsForMap.length > 0) {
         doc.addPage();
-        // Header
-        doc.setFillColor(14, 165, 233);
-        doc.rect(0, 0, pw, 14, 'F');
-        doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
-        doc.text('Karte — Alle Standorte', ml, 9.5);
 
+        // Seitentitel
+        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(148, 163, 184);
+        doc.text('STANDORTE', ml, 14);
+        doc.setFontSize(18); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
+        doc.text('Wo wir waren', ml, 23);
+        doc.setFillColor(14, 165, 233);
+        doc.rect(ml, 26, 20, 1.5, 'F');
+
+        // Karte
         const mapImg = await buildMapDataUrl(pinsForMap);
-        const mapH = 90;
+        const mapY = 32;
+        const mapH = 110;
         if (mapImg) {
-          doc.addImage(mapImg, 'PNG', 0, 16, pw, mapH, undefined, 'FAST');
+          doc.addImage(mapImg, 'PNG', ml, mapY, cw, mapH, undefined, 'FAST');
+          // Rahmen um Karte
+          doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.3);
+          doc.rect(ml, mapY, cw, mapH);
         }
 
-        // Pin-Legende
-        let legendY = 16 + mapH + 8;
-        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(71, 85, 105);
-        doc.text('Legende', ml, legendY); legendY += 5;
-
-        const cols = 3;
-        const colW = cw / cols;
-        trip.photos.forEach((photo, i) => {
-          if (!photo.lat) return;
-          const col = (i % cols);
-          const row = Math.floor(i / cols);
-          const lx = ml + col * colW;
-          const ly = legendY + row * 7;
-          if (ly > ph - 15) return; // skip if off page
-
-          doc.setFillColor(239, 68, 68);
-          doc.roundedRect(lx, ly - 3.5, 8, 5, 1, 1, 'F');
-          doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
-          doc.text(String(i + 1).padStart(2, '0'), lx + 1, ly);
-
-          doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(71, 85, 105);
-          const label = [photo.placeName, photo.placeOrt].filter(Boolean).join(', ') || '–';
-          const labelTrimmed = label.length > 28 ? label.slice(0, 26) + '…' : label;
-          doc.text(labelTrimmed, lx + 10, ly);
+        // Legende: Standorte nach Ort gruppiert (keine Duplikate)
+        interface LegendGroup { nums: number[]; name: string; ort: string }
+        const groups: LegendGroup[] = [];
+        pinsForMap.forEach(pin => {
+          const photo = trip.photos[pin.num - 1];
+          const key = `${photo.placeName}||${photo.placeOrt}`;
+          const existing = groups.find(g => `${g.name}||${g.ort}` === key);
+          if (existing) { existing.nums.push(pin.num); }
+          else { groups.push({ nums: [pin.num], name: photo.placeName || '', ort: photo.placeOrt || '' }); }
         });
+
+        let ly = mapY + mapH + 10;
+        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(148, 163, 184);
+        doc.text('LEGENDE', ml, ly); ly += 6;
+
+        // 2 Spalten, je Gruppe eine Zeile
+        const colW2 = (cw - 6) / 2;
+        let col = 0;
+        let rowBaseY = ly;
+
+        for (const g of groups) {
+          const lx = ml + col * (colW2 + 6);
+          if (ly > ph - 18) break; // Kein Platz mehr
+
+          // Nummern-Badges
+          const numStr = g.nums.map(n => String(n).padStart(2, '0')).join(', ');
+          doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(239, 68, 68);
+          doc.text(numStr, lx, ly);
+
+          // Ortsname
+          doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 41, 59);
+          const nameShort = g.name.length > 30 ? g.name.slice(0, 28) + '…' : g.name || '–';
+          doc.text(nameShort, lx, ly + 5);
+
+          // Stadt, Land
+          if (g.ort) {
+            doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(148, 163, 184);
+            const ortShort = g.ort.length > 32 ? g.ort.slice(0, 30) + '…' : g.ort;
+            doc.text(ortShort, lx, ly + 10);
+          }
+
+          col++;
+          if (col === 2) { col = 0; rowBaseY = ly + 16; ly = rowBaseY; }
+          else if (col === 1) { /* stay on same row */ }
+        }
+        void rowBaseY;
       }
 
-      // ---- FOTOS: 2 pro Seite ----
-      const MAX_IMG_H = 72; // mm max pro Foto
+      // ---- FOTOS: 2 pro Seite, richtiges Seitenverhältnis ----
+      // Professionelle Fotobuch-Optik: großzügige Ränder, klare Typografie
+      const PAGE_ML = 15;        // Rand links/rechts
+      const PAGE_CW = pw - PAGE_ML * 2;
+      const MAX_IMG_H = 88;      // mm max Bildhöhe
+      const CAPTION_H = 18;      // mm für Ort + Notiz
+      const SLOT_H = MAX_IMG_H + CAPTION_H + 8; // pro Foto-Slot
+      const DIVIDER_Y = ph / 2;  // Seitentrennlinie bei A4-Hälfte
+
       let slotOnPage = 0;
       let y = 0;
 
@@ -388,74 +425,72 @@ export default function TripDetailPage() {
         const num = String(i + 1).padStart(2, '0');
 
         if (slotOnPage === 0) {
-          doc.addPage(); y = 12;
+          doc.addPage();
+          y = 14;
+          slotOnPage = 0;
         }
 
-        // Bild mit korrektem Seitenverhältnis
+        // Foto mit korrektem Seitenverhältnis
         const { w, h } = await getImageSize(photo.imageData);
         const aspect = h / w;
-        let imgW = cw, imgH = cw * aspect;
+        let imgW = PAGE_CW, imgH = PAGE_CW * aspect;
         if (imgH > MAX_IMG_H) { imgH = MAX_IMG_H; imgW = MAX_IMG_H / aspect; }
-        const imgX = ml + (cw - imgW) / 2;
+        const imgX = PAGE_ML + (PAGE_CW - imgW) / 2;
+        const imgY = y;
 
-        // Nummern-Badge
-        doc.setFillColor(239, 68, 68);
-        doc.roundedRect(imgX, y, 10, 6, 1, 1, 'F');
-        doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
-        doc.text(num, imgX + 1.8, y + 4.3);
-
-        const imgY = y + 8;
         try {
           const fmt = photo.imageData.startsWith('data:image/png') ? 'PNG' : 'JPEG';
           doc.addImage(photo.imageData, fmt, imgX, imgY, imgW, imgH, undefined, 'FAST');
         } catch {
-          doc.setFillColor(240, 244, 248);
-          doc.roundedRect(imgX, imgY, imgW, imgH, 2, 2, 'F');
+          doc.setFillColor(243, 244, 246);
+          doc.rect(imgX, imgY, imgW, imgH, 'F');
         }
 
-        let infoY = imgY + imgH + 3;
+        // Nummern-Badge über dem Bild (oben links, dezent)
+        doc.setFillColor(239, 68, 68);
+        doc.roundedRect(imgX, imgY, 11, 7, 1, 1, 'F');
+        doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
+        doc.text(num, imgX + 2, imgY + 5);
 
-        if (photo.placeName || photo.placeOrt) {
-          doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(14, 165, 233);
-          doc.text('|', ml, infoY + 0.5);
-          doc.setTextColor(30, 41, 59);
-          if (photo.placeName) doc.text(photo.placeName, ml + 4, infoY + 0.5);
-          if (photo.placeOrt) {
-            doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139); doc.setFontSize(7.5);
-            doc.text(photo.placeOrt, ml + 4, infoY + 5.5);
-            infoY += 5;
-          }
-          infoY += 6;
+        // Caption-Bereich unter dem Bild
+        let captionY = imgY + imgH + 4;
+
+        if (photo.placeName) {
+          doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 41, 59);
+          doc.text(photo.placeName, PAGE_ML, captionY);
+          captionY += 5;
         }
-
+        if (photo.placeOrt) {
+          doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(148, 163, 184);
+          doc.text(photo.placeOrt, PAGE_ML, captionY);
+          captionY += 5;
+        }
         if (photo.note) {
-          const noteLines = doc.splitTextToSize(`"${photo.note}"`, cw - 6);
-          const boxH = noteLines.length * 3.8 + 5;
-          doc.setFillColor(255, 251, 235);
-          doc.roundedRect(ml, infoY, cw, boxH, 1.5, 1.5, 'F');
-          doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 80, 20);
-          doc.text(noteLines, ml + 3, infoY + 4);
-          infoY += boxH + 2;
+          doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 100, 60);
+          const noteLines = doc.splitTextToSize(`"${photo.note}"`, PAGE_CW);
+          doc.text(noteLines.slice(0, 2), PAGE_ML, captionY); // max 2 Zeilen
         }
 
         if (slotOnPage === 0) {
-          // Trenner in Seitenmitte
-          y = infoY + 4;
-          doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3);
-          doc.line(ml, y, ml + cw, y);
-          y += 5;
+          // Dünne Trennlinie genau in der Seitenmitte
+          y = DIVIDER_Y - 2;
+          doc.setDrawColor(235, 235, 235); doc.setLineWidth(0.2);
+          doc.line(PAGE_ML, y, PAGE_ML + PAGE_CW, y);
+          y = DIVIDER_Y + 5;
           slotOnPage = 1;
         } else {
           slotOnPage = 0;
         }
+        void SLOT_H;
       }
 
-      // ---- FOOTER ----
+      // ---- FOOTER: Seitenzahl zentriert ----
       const pageCount = doc.getNumberOfPages();
-      for (let p = 1; p <= pageCount; p++) {
+      for (let p = 2; p <= pageCount; p++) { // Ab Seite 2 (Cover ohne Footer)
         doc.setPage(p);
-        doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(180, 180, 180);
-        doc.text(`${trip.name}  ·  Seite ${p} / ${pageCount}`, ml, ph - 5);
+        doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(200, 200, 200);
+        const pageStr = `${p - 1}`;
+        doc.text(pageStr, pw / 2 - doc.getTextWidth(pageStr) / 2, ph - 6);
       }
 
       doc.save(`Fotobuch-${trip.name}.pdf`);
