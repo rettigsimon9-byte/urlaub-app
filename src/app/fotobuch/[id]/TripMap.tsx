@@ -72,7 +72,7 @@ export default function TripMap({ photos }: { photos: PhotoPin[] }) {
       const map = L.map(mapRef.current!, { zoomControl: true, attributionControl: false });
       instanceRef.current = map;
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
       const clusters = clusterPhotos(photos);
 

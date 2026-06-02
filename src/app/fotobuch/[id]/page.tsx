@@ -383,9 +383,12 @@ export default function TripDetailPage() {
           const coverCardX = 18;
           const { w: cw2, h: ch2 } = await getImageSize(trip.coverPhoto);
           const coverAspect = ch2 / cw2;
-          const coverPhotoW = coverCardW - 8;
+          let coverPhotoW = coverCardW - 8;
           let coverPhotoH = coverPhotoW * coverAspect;
-          if (coverPhotoH > 140) coverPhotoH = 140;
+          if (coverPhotoH > 140) {
+            coverPhotoH = 140;
+            coverPhotoW = coverPhotoH / coverAspect; // Breite proportional reduzieren
+          }
           const coverCardH = 4 + coverPhotoH + 4 + 24;
           const coverCardY = (ph - coverCardH) / 2 - 20;
 
