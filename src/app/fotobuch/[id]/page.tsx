@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ChevronLeft, Loader2, Trash2, ImagePlus, X } from 'lucide-react';
-import { resizeImage, getMediaType } from '@/lib/utils';
+import { ChevronLeft, Loader2, Trash2, ImagePlus, MapPin } from 'lucide-react';
+import { resizeImage } from '@/lib/utils';
 
 interface Photo {
   id: string;
@@ -14,7 +14,6 @@ interface Photo {
   placeName: string;
   placeType: string;
   placeOrt: string;
-  placeInfo: string;
   createdAt: string;
 }
 
@@ -30,7 +29,40 @@ interface Trip {
 interface UploadingPhoto {
   id: string;
   preview: string;
-  status: 'analyzing' | 'saving' | 'done' | 'error';
+  status: 'uploading' | 'done' | 'error';
+}
+
+async function extractGPS(file: File): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const { default: exifr } = await import('exifr');
+    const gps = await exifr.gps(file);
+    if (!gps || !gps.latitude || !gps.longitude) return null;
+    return { lat: gps.latitude, lon: gps.longitude };
+  } catch {
+    return null;
+  }
+}
+
+async function reverseGeocode(lat: number, lon: number): Promise<{ name: string; ort: string } | null> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=de`,
+      { headers: { 'User-Agent': 'UrlaubApp/1.0' } }
+    );
+    const data = await res.json();
+    const addr = data.address || {};
+    const name =
+      addr.tourism || addr.amenity || addr.historic || addr.natural ||
+      addr.leisure || addr.shop || addr.road || data.display_name?.split(',')[0] || '';
+    const city = addr.city || addr.town || addr.village || addr.county || '';
+    const country = addr.country || '';
+    return {
+      name: name.trim(),
+      ort: [city, country].filter(Boolean).join(', '),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export default function TripDetailPage() {
@@ -61,7 +93,7 @@ export default function TripDetailPage() {
     const newUploads: UploadingPhoto[] = images.map(f => ({
       id: Math.random().toString(36).slice(2),
       preview: URL.createObjectURL(f),
-      status: 'analyzing' as const,
+      status: 'uploading' as const,
     }));
     setUploading(prev => [...prev, ...newUploads]);
 
@@ -69,35 +101,26 @@ export default function TripDetailPage() {
       const file = images[i];
       const uid = newUploads[i].id;
       try {
-        const [display, analysisImg, thumb] = await Promise.all([
+        const [display, thumb] = await Promise.all([
           resizeImage(file, 1200),
-          resizeImage(file, 512),
           resizeImage(file, 300),
         ]);
 
-        // KI-Analyse
-        const analyzeRes = await fetch('/api/analyze-place', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: analysisImg, mediaType: getMediaType(analysisImg) }),
-        });
-        const place = await analyzeRes.json();
+        const gps = await extractGPS(file);
+        let placeName = '';
+        let placeOrt = '';
+        if (gps) {
+          const geo = await reverseGeocode(gps.lat, gps.lon);
+          if (geo) {
+            placeName = geo.name;
+            placeOrt = geo.ort;
+          }
+        }
 
-        setUploading(prev => prev.map(u => u.id === uid ? { ...u, status: 'saving' } : u));
-
-        // Speichern
         const saveRes = await fetch('/api/photos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tripId,
-            imageData: display,
-            thumbnail: thumb,
-            placeName: place.gefunden ? place.name : '',
-            placeType: place.gefunden ? place.typ : '',
-            placeOrt: place.gefunden ? place.ort : '',
-            placeInfo: place.gefunden ? JSON.stringify({ beschreibung: place.beschreibung, fakten: place.fakten }) : '',
-          }),
+          body: JSON.stringify({ tripId, imageData: display, thumbnail: thumb, placeName, placeOrt, placeType: '', placeInfo: '' }),
         });
         const savedPhoto = await saveRes.json();
 
@@ -142,10 +165,6 @@ export default function TripDetailPage() {
   const openPhoto = (photo: Photo) => {
     setSelectedPhoto(photo);
     setEditNote(photo.note);
-  };
-
-  const placeInfo = (photo: Photo) => {
-    try { return photo.placeInfo ? JSON.parse(photo.placeInfo) : null; } catch { return null; }
   };
 
   if (loading) {
@@ -201,7 +220,7 @@ export default function TripDetailPage() {
             onChange={e => { if (e.target.files) processFiles(Array.from(e.target.files)); }} />
           <ImagePlus size={24} className="text-gray-300 mx-auto mb-2" />
           <p className="text-sm text-gray-400 font-medium">Fotos hineinziehen oder antippen</p>
-          <p className="text-xs text-gray-300 mt-1">Mehrere gleichzeitig möglich · KI erkennt automatisch den Ort</p>
+          <p className="text-xs text-gray-300 mt-1">Ort wird automatisch aus GPS-Daten ermittelt</p>
         </div>
 
         {/* Upload progress */}
@@ -212,13 +231,12 @@ export default function TripDetailPage() {
                 <img src={u.preview} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
                 <div className="flex-1">
                   <p className="text-xs font-medium text-gray-600">
-                    {u.status === 'analyzing' && 'KI analysiert Ort…'}
-                    {u.status === 'saving' && 'Wird gespeichert…'}
+                    {u.status === 'uploading' && 'Wird gespeichert…'}
                     {u.status === 'done' && '✅ Gespeichert'}
                     {u.status === 'error' && '⚠️ Fehler'}
                   </p>
                 </div>
-                {(u.status === 'analyzing' || u.status === 'saving') && (
+                {u.status === 'uploading' && (
                   <Loader2 size={16} className="text-sky-400 animate-spin flex-shrink-0" />
                 )}
               </div>
@@ -234,58 +252,43 @@ export default function TripDetailPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {trip.photos.map(photo => {
-              const info = placeInfo(photo);
-              return (
-                <div key={photo.id} className="bg-white rounded-3xl overflow-hidden shadow-sm">
-                  {/* Photo */}
-                  <button className="w-full" onClick={() => openPhoto(photo)}>
-                    <img src={photo.imageData} alt={photo.placeName || 'Foto'}
-                      className="w-full max-h-72 object-cover" />
-                  </button>
+            {trip.photos.map(photo => (
+              <div key={photo.id} className="bg-white rounded-3xl overflow-hidden shadow-sm">
+                <button className="w-full" onClick={() => openPhoto(photo)}>
+                  <img src={photo.imageData} alt={photo.placeName || 'Foto'}
+                    className="w-full max-h-72 object-cover" />
+                </button>
 
-                  {/* Info */}
-                  <div className="p-4">
-                    {photo.placeName ? (
-                      <>
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <h3 className="font-bold text-gray-900 text-lg leading-tight">{photo.placeName}</h3>
-                        </div>
+                <div className="p-4">
+                  {/* Ort aus GPS */}
+                  {(photo.placeName || photo.placeOrt) ? (
+                    <div className="flex items-start gap-1.5 mb-3">
+                      <MapPin size={13} className="text-sky-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        {photo.placeName && (
+                          <p className="font-semibold text-gray-900 text-sm leading-tight">{photo.placeName}</p>
+                        )}
                         {photo.placeOrt && (
-                          <p className="text-xs text-sky-500 font-medium mb-2">
-                            📍 {photo.placeType && `${photo.placeType} · `}{photo.placeOrt}
-                          </p>
+                          <p className="text-xs text-gray-400">{photo.placeOrt}</p>
                         )}
-                        {info?.beschreibung && (
-                          <p className="text-sm text-gray-600 leading-relaxed mb-3">{info.beschreibung}</p>
-                        )}
-                        {info?.fakten?.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mb-3">
-                            {info.fakten.map((f: string, i: number) => (
-                              <span key={i} className="text-xs bg-sky-50 text-sky-600 px-2.5 py-1 rounded-full">{f}</span>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-sm text-gray-400 italic mb-3">Kein Ort erkannt</p>
-                    )}
-
-                    {/* Note */}
-                    {photo.note ? (
-                      <div className="bg-amber-50 rounded-xl px-3 py-2 border-l-4 border-amber-300">
-                        <p className="text-sm text-amber-800 italic">"{photo.note}"</p>
                       </div>
-                    ) : (
-                      <button onClick={() => openPhoto(photo)}
-                        className="text-xs text-gray-300 hover:text-gray-400 transition-colors">
-                        + Eigene Notiz hinzufügen
-                      </button>
-                    )}
-                  </div>
+                    </div>
+                  ) : null}
+
+                  {/* Eigene Notiz */}
+                  {photo.note ? (
+                    <div className="bg-amber-50 rounded-xl px-3 py-2 border-l-4 border-amber-300">
+                      <p className="text-sm text-amber-800 italic">"{photo.note}"</p>
+                    </div>
+                  ) : (
+                    <button onClick={() => openPhoto(photo)}
+                      className="text-xs text-gray-300 hover:text-gray-400 transition-colors">
+                      + Notiz hinzufügen
+                    </button>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -303,18 +306,22 @@ export default function TripDetailPage() {
             <img src={selectedPhoto.imageData} alt="" className="w-full max-h-64 object-contain bg-gray-50" />
 
             <div className="p-5 space-y-4">
-              {selectedPhoto.placeName && (
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900">{selectedPhoto.placeName}</h2>
-                  {selectedPhoto.placeOrt && (
-                    <p className="text-sm text-sky-500 font-medium mt-0.5">
-                      📍 {selectedPhoto.placeType && `${selectedPhoto.placeType} · `}{selectedPhoto.placeOrt}
-                    </p>
-                  )}
+              {/* Ort */}
+              {(selectedPhoto.placeName || selectedPhoto.placeOrt) && (
+                <div className="flex items-start gap-2">
+                  <MapPin size={15} className="text-sky-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    {selectedPhoto.placeName && (
+                      <p className="font-semibold text-gray-900">{selectedPhoto.placeName}</p>
+                    )}
+                    {selectedPhoto.placeOrt && (
+                      <p className="text-sm text-gray-400">{selectedPhoto.placeOrt}</p>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Note editor */}
+              {/* Notiz-Editor */}
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Meine Notiz</p>
                 <textarea
@@ -322,7 +329,7 @@ export default function TripDetailPage() {
                   onChange={e => setEditNote(e.target.value)}
                   placeholder="Was war besonders? Wie war das Wetter? Erinnerungen…"
                   className="w-full px-3 py-2.5 bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-sky-300 resize-none"
-                  rows={3}
+                  rows={4}
                 />
                 <button onClick={saveNote} disabled={savingNote}
                   className="mt-2 w-full py-2.5 bg-sky-500 text-white rounded-xl text-sm font-semibold hover:bg-sky-600 transition-colors disabled:opacity-50">
