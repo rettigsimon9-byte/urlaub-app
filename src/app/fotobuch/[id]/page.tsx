@@ -292,205 +292,234 @@ export default function TripDetailPage() {
     try {
       const { default: jsPDF } = await import('jspdf');
       const doc = new jsPDF('p', 'mm', 'a4');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const d = doc as any;
       const pw = doc.internal.pageSize.getWidth();
       const ph = doc.internal.pageSize.getHeight();
       const ml = 12;
       const cw = pw - ml * 2;
 
+      // Hilfsfunktion: dunkle Seite anlegen
+      const darkPage = () => {
+        doc.addPage();
+        d.setFillColor(28, 28, 30);
+        d.rect(0, 0, pw, ph, 'F');
+      };
+
+      // Hilfsfunktion: Polaroid-Karte zeichnen
+      // Gibt die tatsächliche Kartenhöhe zurück
+      const drawPolaroid = async (
+        photo: { imageData: string; placeName: string; placeOrt: string; note: string },
+        num: string,
+        cardX: number,
+        cardY: number,
+        cardW: number,
+      ): Promise<number> => {
+        const PAD = 5;
+        const BOTTOM = 22;
+        const MAX_H = 78;
+
+        const { w, h } = await getImageSize(photo.imageData);
+        const aspect = h / w;
+        let photoW = cardW - PAD * 2;
+        let photoH = photoW * aspect;
+        if (photoH > MAX_H) { photoH = MAX_H; photoW = photoH / aspect; }
+        const cardH = PAD + photoH + PAD + BOTTOM;
+
+        // Schatten (leicht versetzt, dunkelgrau auf dunklem Hintergrund)
+        d.setFillColor(10, 10, 12);
+        d.rect(cardX + 4, cardY + 4, cardW, cardH, 'F');
+
+        // Weißer Polaroid-Rahmen
+        d.setFillColor(255, 255, 255);
+        d.rect(cardX, cardY, cardW, cardH, 'F');
+
+        // Foto einbetten
+        const photoX = cardX + PAD + (cardW - PAD * 2 - photoW) / 2;
+        const photoY = cardY + PAD;
+        try {
+          const fmt = photo.imageData.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+          d.addImage(photo.imageData, fmt, photoX, photoY, photoW, photoH, undefined, 'FAST');
+        } catch {
+          d.setFillColor(220, 220, 220);
+          d.rect(photoX, photoY, photoW, photoH, 'F');
+        }
+
+        // Caption im weißen Unterteil
+        const capY = cardY + PAD + photoH + PAD + 4;
+        // Ort
+        if (photo.placeName) {
+          d.setFontSize(8); d.setFont('helvetica', 'bold'); d.setTextColor(30, 30, 30);
+          const name = photo.placeName.length > 24 ? photo.placeName.slice(0, 22) + '…' : photo.placeName;
+          d.text(name, cardX + PAD, capY);
+        }
+        if (photo.placeOrt) {
+          d.setFontSize(6.5); d.setFont('helvetica', 'normal'); d.setTextColor(130, 130, 130);
+          const ort = photo.placeOrt.length > 28 ? photo.placeOrt.slice(0, 26) + '…' : photo.placeOrt;
+          d.text(ort, cardX + PAD, capY + (photo.placeName ? 5 : 0));
+        }
+        if (photo.note && !photo.placeName) {
+          d.setFontSize(7); d.setFont('helvetica', 'italic'); d.setTextColor(80, 80, 80);
+          d.text(`"${photo.note.slice(0, 28)}"`, cardX + PAD, capY);
+        }
+
+        // Rote Nummern-Badge oben rechts
+        d.setFillColor(220, 50, 50);
+        d.roundedRect(cardX + cardW - 14, cardY + 3, 12, 7, 1, 1, 'F');
+        d.setFontSize(6.5); d.setFont('helvetica', 'bold'); d.setTextColor(255, 255, 255);
+        d.text(num, cardX + cardW - 12.5, cardY + 7.5);
+
+        return cardH;
+      };
+
       // ---- SEITE 1: COVER ----
-      // Deckblatt: Vollformatfoto + eleganter Textbereich darunter
+      d.setFillColor(28, 28, 30);
+      d.rect(0, 0, pw, ph, 'F');
+
       if (trip.coverPhoto) {
         try {
+          // Großes zentrales Polaroid-Cover
+          const coverCardW = pw - 36;
+          const coverCardX = 18;
+          const { w: cw2, h: ch2 } = await getImageSize(trip.coverPhoto);
+          const coverAspect = ch2 / cw2;
+          const coverPhotoW = coverCardW - 8;
+          let coverPhotoH = coverPhotoW * coverAspect;
+          if (coverPhotoH > 140) coverPhotoH = 140;
+          const coverCardH = 4 + coverPhotoH + 4 + 24;
+          const coverCardY = (ph - coverCardH) / 2 - 20;
+
+          // Schatten
+          d.setFillColor(8, 8, 10);
+          d.rect(coverCardX + 5, coverCardY + 5, coverCardW, coverCardH, 'F');
+          // Weiße Karte
+          d.setFillColor(255, 255, 255);
+          d.rect(coverCardX, coverCardY, coverCardW, coverCardH, 'F');
+          // Cover-Foto
           const fmt = trip.coverPhoto.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-          // Foto nimmt obere 65% der Seite ein
-          const coverH = ph * 0.65;
-          doc.addImage(trip.coverPhoto, fmt, 0, 0, pw, coverH, undefined, 'FAST');
-          // Dünner weißer Trennstrich
-          doc.setFillColor(255, 255, 255);
-          doc.rect(0, coverH, pw, 2, 'F');
-          // Unterer Bereich: cremefarbener Hintergrund
-          doc.setFillColor(250, 249, 246);
-          doc.rect(0, coverH + 2, pw, ph - coverH - 2, 'F');
-          // Akzentlinie links
-          doc.setFillColor(14, 165, 233);
-          doc.rect(ml, coverH + 14, 3, 28, 'F');
-          // Titel
-          doc.setFontSize(26); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
-          doc.text(trip.name, ml + 8, coverH + 24);
-          doc.setFontSize(12); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139);
-          doc.text(trip.destination, ml + 8, coverH + 33);
-          // Datum + Anzahl
-          doc.setFontSize(8.5); doc.setTextColor(148, 163, 184);
-          const meta: string[] = [];
-          if (trip.startDate) meta.push(trip.endDate ? `${trip.startDate} – ${trip.endDate}` : trip.startDate);
-          meta.push(`${trip.photos.length} Fotos`);
-          doc.text(meta.join('   ·   '), ml + 8, coverH + 41);
+          d.addImage(trip.coverPhoto, fmt, coverCardX + 4, coverCardY + 4, coverPhotoW, coverPhotoH, undefined, 'FAST');
+          // Titel im Polaroid-Unterteil
+          d.setFontSize(11); d.setFont('helvetica', 'bold'); d.setTextColor(30, 30, 30);
+          d.text(trip.name, coverCardX + 8, coverCardY + 4 + coverPhotoH + 12);
+          d.setFontSize(8); d.setFont('helvetica', 'normal'); d.setTextColor(140, 140, 140);
+          d.text(trip.destination, coverCardX + 8, coverCardY + 4 + coverPhotoH + 19);
         } catch {
-          renderFallbackCover(doc, trip, pw, ml, cw);
+          // Fallback-Titel
+          d.setFontSize(28); d.setFont('helvetica', 'bold'); d.setTextColor(255, 255, 255);
+          d.text(trip.name, 18, ph / 2);
         }
       } else {
-        renderFallbackCover(doc, trip, pw, ml, cw);
+        // Kein Cover-Foto: eleganter Titel auf Dunkel
+        d.setFontSize(32); d.setFont('helvetica', 'bold'); d.setTextColor(255, 255, 255);
+        d.text(trip.name, 18, ph / 2 - 10);
+        d.setFontSize(14); d.setFont('helvetica', 'normal'); d.setTextColor(150, 150, 155);
+        d.text(trip.destination, 18, ph / 2 + 5);
       }
+      // Datum + Anzahl unten
+      d.setFontSize(8); d.setFont('helvetica', 'normal'); d.setTextColor(100, 100, 105);
+      const metaParts: string[] = [];
+      if (trip.startDate) metaParts.push(trip.endDate ? `${trip.startDate} – ${trip.endDate}` : trip.startDate);
+      metaParts.push(`${trip.photos.length} Fotos`);
+      d.text(metaParts.join('   ·   '), 18, ph - 18);
 
       // ---- SEITE 2: KARTE ----
       const pinsForMap = trip.photos
         .map((p, i) => ({ ...p, num: i + 1 }))
         .filter(p => p.lat != null && p.lon != null)
-        .map(p => ({ lat: p.lat!, lon: p.lon!, num: p.num }));
+        .map(p => ({ lat: p.lat!, lon: p.lon!, num: p.num, placeName: p.placeName, placeOrt: p.placeOrt }));
 
       if (pinsForMap.length > 0) {
-        doc.addPage();
+        darkPage();
 
-        // Seitentitel
-        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(148, 163, 184);
-        doc.text('STANDORTE', ml, 14);
-        doc.setFontSize(18); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
-        doc.text('Wo wir waren', ml, 23);
-        doc.setFillColor(14, 165, 233);
-        doc.rect(ml, 26, 20, 1.5, 'F');
+        // Titel
+        d.setFontSize(9); d.setFont('helvetica', 'bold'); d.setTextColor(100, 100, 110);
+        d.text('STANDORTE', 18, 18);
+        d.setFontSize(22); d.setFont('helvetica', 'bold'); d.setTextColor(240, 240, 245);
+        d.text('Wo wir waren', 18, 28);
+        d.setFillColor(239, 68, 68);
+        d.rect(18, 31, 18, 1.5, 'F');
 
-        // Karte
+        // Karte als helles Panel auf dunklem Hintergrund
         const mapImg = await buildMapDataUrl(pinsForMap);
-        const mapY = 32;
-        const mapH = 110;
+        const mapX = 18, mapY = 37, mapW = pw - 36, mapH = 115;
         if (mapImg) {
-          doc.addImage(mapImg, 'PNG', ml, mapY, cw, mapH, undefined, 'FAST');
-          // Rahmen um Karte
-          doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.3);
-          doc.rect(ml, mapY, cw, mapH);
+          // Leicht erhöhte Karten-Karte (weiße Umrandung)
+          d.setFillColor(255, 255, 255);
+          d.rect(mapX - 2, mapY - 2, mapW + 4, mapH + 4, 'F');
+          d.addImage(mapImg, 'PNG', mapX, mapY, mapW, mapH, undefined, 'FAST');
         }
 
-        // Legende: Standorte nach Ort gruppiert (keine Duplikate)
+        // Legende als saubere Liste
         interface LegendGroup { nums: number[]; name: string; ort: string }
         const groups: LegendGroup[] = [];
         pinsForMap.forEach(pin => {
-          const photo = trip.photos[pin.num - 1];
-          const key = `${photo.placeName}||${photo.placeOrt}`;
+          const key = `${pin.placeName}||${pin.placeOrt}`;
           const existing = groups.find(g => `${g.name}||${g.ort}` === key);
-          if (existing) { existing.nums.push(pin.num); }
-          else { groups.push({ nums: [pin.num], name: photo.placeName || '', ort: photo.placeOrt || '' }); }
+          if (existing) existing.nums.push(pin.num);
+          else groups.push({ nums: [pin.num], name: pin.placeName || '', ort: pin.placeOrt || '' });
         });
 
-        let ly = mapY + mapH + 10;
-        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(148, 163, 184);
-        doc.text('LEGENDE', ml, ly); ly += 6;
+        let ly = mapY + mapH + 12;
+        d.setFontSize(7.5); d.setFont('helvetica', 'bold'); d.setTextColor(100, 100, 110);
+        d.text('LEGENDE', 18, ly); ly += 7;
 
-        // 2 Spalten, je Gruppe eine Zeile
-        const colW2 = (cw - 6) / 2;
+        const colW = (pw - 36 - 8) / 2;
         let col = 0;
-        let rowBaseY = ly;
+        let rowY = ly;
 
         for (const g of groups) {
-          const lx = ml + col * (colW2 + 6);
-          if (ly > ph - 18) break; // Kein Platz mehr
-
-          // Nummern-Badges
+          if (rowY > ph - 14) break;
+          const lx = 18 + col * (colW + 8);
+          // Nummern rot
           const numStr = g.nums.map(n => String(n).padStart(2, '0')).join(', ');
-          doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(239, 68, 68);
-          doc.text(numStr, lx, ly);
-
-          // Ortsname
-          doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 41, 59);
-          const nameShort = g.name.length > 30 ? g.name.slice(0, 28) + '…' : g.name || '–';
-          doc.text(nameShort, lx, ly + 5);
-
-          // Stadt, Land
+          d.setFontSize(7); d.setFont('helvetica', 'bold'); d.setTextColor(220, 80, 80);
+          d.text(numStr, lx, rowY);
+          // Ort
+          d.setFontSize(8); d.setFont('helvetica', 'bold'); d.setTextColor(220, 220, 230);
+          d.text((g.name || '–').slice(0, 28), lx, rowY + 5);
+          // Stadt
           if (g.ort) {
-            doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(148, 163, 184);
-            const ortShort = g.ort.length > 32 ? g.ort.slice(0, 30) + '…' : g.ort;
-            doc.text(ortShort, lx, ly + 10);
+            d.setFontSize(6.5); d.setFont('helvetica', 'normal'); d.setTextColor(120, 120, 130);
+            d.text(g.ort.slice(0, 30), lx, rowY + 10);
           }
-
           col++;
-          if (col === 2) { col = 0; rowBaseY = ly + 16; ly = rowBaseY; }
-          else if (col === 1) { /* stay on same row */ }
+          if (col === 2) { col = 0; rowY += 16; }
         }
-        void rowBaseY;
       }
 
-      // ---- FOTOS: 2 pro Seite, richtiges Seitenverhältnis ----
-      // Professionelle Fotobuch-Optik: großzügige Ränder, klare Typografie
-      const PAGE_ML = 15;        // Rand links/rechts
-      const PAGE_CW = pw - PAGE_ML * 2;
-      const MAX_IMG_H = 88;      // mm max Bildhöhe
-      const CAPTION_H = 18;      // mm für Ort + Notiz
-      const SLOT_H = MAX_IMG_H + CAPTION_H + 8; // pro Foto-Slot
-      const DIVIDER_Y = ph / 2;  // Seitentrennlinie bei A4-Hälfte
+      // ---- FOTOS: 2 pro Seite, Polaroid-Stil, gestreutes Layout ----
+      // Linke Karte: oben links; Rechte Karte: unten rechts (wie im Screenshot)
+      const CARD_W = 95;
 
-      let slotOnPage = 0;
-      let y = 0;
+      for (let i = 0; i < trip.photos.length; i += 2) {
+        darkPage();
 
-      for (let i = 0; i < trip.photos.length; i++) {
-        const photo = trip.photos[i];
-        const num = String(i + 1).padStart(2, '0');
+        const photoA = trip.photos[i];
+        const numA = String(i + 1).padStart(2, '0');
 
-        if (slotOnPage === 0) {
-          doc.addPage();
-          y = 14;
-          slotOnPage = 0;
+        // Karte A: oben links
+        const cardAx = 10;
+        const cardAy = 14;
+        const cardAH = await drawPolaroid(photoA, numA, cardAx, cardAy, CARD_W);
+
+        // Karte B (falls vorhanden): unten rechts, leicht versetzt
+        if (i + 1 < trip.photos.length) {
+          const photoB = trip.photos[i + 1];
+          const numB = String(i + 2).padStart(2, '0');
+          const cardBx = pw - CARD_W - 10;
+          // Y-Start: unterhalb von Karte A, plus Versatz für den gestaffelten Look
+          const cardBy = Math.max(cardAy + cardAH + 12, ph / 2 - 10);
+          await drawPolaroid(photoB, numB, cardBx, cardBy, CARD_W);
         }
-
-        // Foto mit korrektem Seitenverhältnis
-        const { w, h } = await getImageSize(photo.imageData);
-        const aspect = h / w;
-        let imgW = PAGE_CW, imgH = PAGE_CW * aspect;
-        if (imgH > MAX_IMG_H) { imgH = MAX_IMG_H; imgW = MAX_IMG_H / aspect; }
-        const imgX = PAGE_ML + (PAGE_CW - imgW) / 2;
-        const imgY = y;
-
-        try {
-          const fmt = photo.imageData.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-          doc.addImage(photo.imageData, fmt, imgX, imgY, imgW, imgH, undefined, 'FAST');
-        } catch {
-          doc.setFillColor(243, 244, 246);
-          doc.rect(imgX, imgY, imgW, imgH, 'F');
-        }
-
-        // Nummern-Badge über dem Bild (oben links, dezent)
-        doc.setFillColor(239, 68, 68);
-        doc.roundedRect(imgX, imgY, 11, 7, 1, 1, 'F');
-        doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
-        doc.text(num, imgX + 2, imgY + 5);
-
-        // Caption-Bereich unter dem Bild
-        let captionY = imgY + imgH + 4;
-
-        if (photo.placeName) {
-          doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 41, 59);
-          doc.text(photo.placeName, PAGE_ML, captionY);
-          captionY += 5;
-        }
-        if (photo.placeOrt) {
-          doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(148, 163, 184);
-          doc.text(photo.placeOrt, PAGE_ML, captionY);
-          captionY += 5;
-        }
-        if (photo.note) {
-          doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 100, 60);
-          const noteLines = doc.splitTextToSize(`"${photo.note}"`, PAGE_CW);
-          doc.text(noteLines.slice(0, 2), PAGE_ML, captionY); // max 2 Zeilen
-        }
-
-        if (slotOnPage === 0) {
-          // Dünne Trennlinie genau in der Seitenmitte
-          y = DIVIDER_Y - 2;
-          doc.setDrawColor(235, 235, 235); doc.setLineWidth(0.2);
-          doc.line(PAGE_ML, y, PAGE_ML + PAGE_CW, y);
-          y = DIVIDER_Y + 5;
-          slotOnPage = 1;
-        } else {
-          slotOnPage = 0;
-        }
-        void SLOT_H;
       }
 
-      // ---- FOOTER: Seitenzahl zentriert ----
+      // ---- FOOTER: Seitenzahl ----
       const pageCount = doc.getNumberOfPages();
-      for (let p = 2; p <= pageCount; p++) { // Ab Seite 2 (Cover ohne Footer)
+      for (let p = 2; p <= pageCount; p++) {
         doc.setPage(p);
-        doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(200, 200, 200);
-        const pageStr = `${p - 1}`;
-        doc.text(pageStr, pw / 2 - doc.getTextWidth(pageStr) / 2, ph - 6);
+        d.setFontSize(7); d.setFont('helvetica', 'normal'); d.setTextColor(80, 80, 85);
+        const ps = String(p - 1);
+        d.text(ps, pw / 2 - doc.getTextWidth(ps) / 2, ph - 6);
       }
 
       doc.save(`Fotobuch-${trip.name}.pdf`);
@@ -741,20 +770,3 @@ export default function TripDetailPage() {
 
 // Hilfsfunktion für Cover-Seite ohne Foto
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderFallbackCover(doc: any, trip: { name: string; destination: string; startDate?: string; endDate?: string; photos: { length: number } }, pw: number, ml: number, cw: number) {
-  void cw;
-  doc.setFillColor(14, 165, 233);
-  doc.rect(0, 0, pw, 55, 'F');
-  doc.setFillColor(7, 89, 133);
-  doc.rect(0, 45, pw, 10, 'F');
-  doc.setFontSize(24); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
-  doc.text(trip.name, ml, 22);
-  doc.setFontSize(14); doc.setFont('helvetica', 'normal');
-  doc.text(trip.destination, ml, 34);
-  doc.setFontSize(9); doc.setTextColor(186, 230, 253);
-  if (trip.startDate) {
-    const dateStr = trip.endDate ? `${trip.startDate}  –  ${trip.endDate}` : trip.startDate;
-    doc.text(dateStr, ml, 51);
-  }
-  doc.text(`${trip.photos.length} Fotos`, pw - ml - doc.getTextWidth(`${trip.photos.length} Fotos`), 51);
-}
