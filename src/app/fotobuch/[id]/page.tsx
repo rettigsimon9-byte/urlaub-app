@@ -4,6 +4,9 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ChevronLeft, Loader2, Trash2, ImagePlus, MapPin } from 'lucide-react';
 import { resizeImage } from '@/lib/utils';
+import dynamic from 'next/dynamic';
+
+const TripMap = dynamic(() => import('./TripMap'), { ssr: false });
 
 interface Photo {
   id: string;
@@ -14,6 +17,8 @@ interface Photo {
   placeName: string;
   placeType: string;
   placeOrt: string;
+  lat?: number | null;
+  lon?: number | null;
   createdAt: string;
 }
 
@@ -34,10 +39,11 @@ interface UploadingPhoto {
 
 async function extractGPS(file: File): Promise<{ lat: number; lon: number } | null> {
   try {
-    const { default: exifr } = await import('exifr');
-    const gps = await exifr.gps(file);
-    if (!gps || !gps.latitude || !gps.longitude) return null;
-    return { lat: gps.latitude, lon: gps.longitude };
+    const exifr = await import('exifr');
+    // Parse the full GPS block explicitly
+    const result = await exifr.default.parse(file, { gps: true, tiff: false });
+    if (!result?.latitude || !result?.longitude) return null;
+    return { lat: result.latitude, lon: result.longitude };
   } catch {
     return null;
   }
@@ -45,21 +51,30 @@ async function extractGPS(file: File): Promise<{ lat: number; lon: number } | nu
 
 async function reverseGeocode(lat: number, lon: number): Promise<{ name: string; ort: string } | null> {
   try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=de`,
-      { headers: { 'User-Agent': 'UrlaubApp/1.0' } }
-    );
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=de&zoom=17`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'UrlaubApp/1.0' } });
+    if (!res.ok) return null;
     const data = await res.json();
     const addr = data.address || {};
+
+    // Priorität: Sehenswürdigkeit → Gastronomie → Freizeitanlage → Natur → Viertel → Straße
     const name =
-      addr.tourism || addr.amenity || addr.historic || addr.natural ||
-      addr.leisure || addr.shop || addr.road || data.display_name?.split(',')[0] || '';
-    const city = addr.city || addr.town || addr.village || addr.county || '';
+      addr.tourism ||
+      addr.amenity ||
+      addr.historic ||
+      addr.leisure ||
+      addr.natural ||
+      addr.shop ||
+      addr.suburb ||
+      addr.neighbourhood ||
+      addr.road ||
+      data.display_name?.split(',')[0] ||
+      '';
+
+    const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || '';
     const country = addr.country || '';
-    return {
-      name: name.trim(),
-      ort: [city, country].filter(Boolean).join(', '),
-    };
+
+    return { name: name.trim(), ort: [city, country].filter(Boolean).join(', ') };
   } catch {
     return null;
   }
@@ -109,7 +124,12 @@ export default function TripDetailPage() {
         const gps = await extractGPS(file);
         let placeName = '';
         let placeOrt = '';
+        let lat: number | null = null;
+        let lon: number | null = null;
+
         if (gps) {
+          lat = gps.lat;
+          lon = gps.lon;
           const geo = await reverseGeocode(gps.lat, gps.lon);
           if (geo) {
             placeName = geo.name;
@@ -120,7 +140,7 @@ export default function TripDetailPage() {
         const saveRes = await fetch('/api/photos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tripId, imageData: display, thumbnail: thumb, placeName, placeOrt, placeType: '', placeInfo: '' }),
+          body: JSON.stringify({ tripId, imageData: display, thumbnail: thumb, placeName, placeOrt, placeType: '', placeInfo: '', lat, lon }),
         });
         const savedPhoto = await saveRes.json();
 
@@ -167,6 +187,11 @@ export default function TripDetailPage() {
     setEditNote(photo.note);
   };
 
+  // Alle Fotos mit GPS für die Karte
+  const mapPhotos = (trip?.photos ?? [])
+    .filter(p => p.lat != null && p.lon != null)
+    .map(p => ({ id: p.id, lat: p.lat!, lon: p.lon!, placeName: p.placeName, thumbnail: p.thumbnail }));
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -206,6 +231,9 @@ export default function TripDetailPage() {
       </div>
 
       <div className="px-5">
+        {/* Weltkarte mit Pins */}
+        <TripMap photos={mapPhotos} />
+
         {/* Drop zone */}
         <div
           className={`border-2 border-dashed rounded-2xl p-6 text-center mb-5 cursor-pointer transition-all ${
@@ -244,7 +272,7 @@ export default function TripDetailPage() {
           </div>
         )}
 
-        {/* Photo book */}
+        {/* Photo list */}
         {trip.photos.length === 0 && uploading.length === 0 ? (
           <div className="text-center py-12">
             <div className="text-4xl mb-3">📷</div>
@@ -260,7 +288,6 @@ export default function TripDetailPage() {
                 </button>
 
                 <div className="p-4">
-                  {/* Ort aus GPS */}
                   {(photo.placeName || photo.placeOrt) ? (
                     <div className="flex items-start gap-1.5 mb-3">
                       <MapPin size={13} className="text-sky-400 mt-0.5 flex-shrink-0" />
@@ -275,7 +302,6 @@ export default function TripDetailPage() {
                     </div>
                   ) : null}
 
-                  {/* Eigene Notiz */}
                   {photo.note ? (
                     <div className="bg-amber-50 rounded-xl px-3 py-2 border-l-4 border-amber-300">
                       <p className="text-sm text-amber-800 italic">"{photo.note}"</p>
@@ -306,7 +332,6 @@ export default function TripDetailPage() {
             <img src={selectedPhoto.imageData} alt="" className="w-full max-h-64 object-contain bg-gray-50" />
 
             <div className="p-5 space-y-4">
-              {/* Ort */}
               {(selectedPhoto.placeName || selectedPhoto.placeOrt) && (
                 <div className="flex items-start gap-2">
                   <MapPin size={15} className="text-sky-400 mt-0.5 flex-shrink-0" />
@@ -321,7 +346,6 @@ export default function TripDetailPage() {
                 </div>
               )}
 
-              {/* Notiz-Editor */}
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Meine Notiz</p>
                 <textarea

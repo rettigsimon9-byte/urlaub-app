@@ -30,5 +30,7 @@ model Photo {
   placeType   String   @default("")
   placeOrt    String   @default("")
   placeInfo   String   @default("") @db.Text
+  lat         Float?
+  lon         Float?
   createdAt   DateTime @default(now())
 }

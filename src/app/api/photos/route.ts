@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
-  const { tripId, imageData, thumbnail, photoDate, note, placeName, placeType, placeOrt, placeInfo } =
+  const { tripId, imageData, thumbnail, photoDate, note, placeName, placeType, placeOrt, placeInfo, lat, lon } =
     await req.json();
   const photo = await prisma.photo.create({
     data: {
@@ -15,6 +15,8 @@ export async function POST(req: NextRequest) {
       placeType: placeType || '',
       placeOrt: placeOrt || '',
       placeInfo: placeInfo || '',
+      lat: lat ?? null,
+      lon: lon ?? null,
     },
   });
 
